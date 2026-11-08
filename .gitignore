@@ -1,0 +1,9 @@
+# Educational PoC local artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+livestock_analytics.duckdb
+*.duckdb.wal
+.DS_Store

@@ -1,0 +1,5 @@
+# Educational Proof-of-Concept / Open-Source Learning Project
+# Dependencies for the livestock vision analytics portfolio demo only.
+duckdb>=1.0.0
+pandas>=2.0.0
+pytest>=8.0.0

@@ -1,1 +1,131 @@
-# vet-vision-eval-pipeline
+# Livestock Vision Analytics & MLOps Engine (Educational Project)
+
+> **Educational Proof-of-Concept / Open-Source Learning Project**  
+> This repository is a self-contained portfolio demo for learning computer-vision telemetry analytics and model-failure monitoring patterns. It is **not** a production farm system, veterinary diagnostic tool, or commercial product.
+
+---
+
+## Hero Image / Architecture
+
+Data moves from synthetic camera-frame metadata through a local DuckDB engine into SQL analytics, then through a PyTest quality harness:
+
+```text
+┌─────────────────────┐     ┌──────────────────────┐     ┌─────────────────┐     ┌──────────────────────┐
+│ Camera Data /       │     │ DuckDB Local Engine  │     │ SQL Analytics   │     │ PyTest Quality      │
+│ Frame Metadata      │────▶│ livestock_analytics  │────▶│ Lying durations │────▶│ Harness              │
+│ (bbox / labels /    │     │ .duckdb              │     │ Failure metrics │     │ (confidence QA)      │
+│  lighting / occlusion)│   │                      │     │                 │     │                      │
+└─────────────────────┘     └──────────────────────┘     └─────────────────┘     └──────────────────────┘
+```
+
+```mermaid
+sequenceDiagram
+    participant Cam as Camera Data / Frame Metadata
+    participant DB as DuckDB Local Engine
+    participant SQL as SQL Analytics
+    participant QA as PyTest Quality Harness
+
+    Cam->>DB: Seed frame_telemetry rows<br/>(bbox labels, confidence, lighting, occlusion)
+    DB->>SQL: Query daily lying durations
+    DB->>SQL: Query low-confidence rates<br/>(low light vs occlusion)
+    SQL->>QA: Filtered high-quality frames
+    QA->>QA: Assert confidence benchmarks
+```
+
+---
+
+## Project Overview
+
+This educational project demonstrates a miniature **MLOps evaluation loop** for agricultural animal-welfare *telemetry* (not clinical diagnosis):
+
+1. **Video frame bounding boxes (simulated)** — Each row in `frame_telemetry` represents a detector output for one animal in one frame: behavior label, confidence, lighting level, and occlusion flag.
+2. **Model failure monitoring under low light** — Analytics compare how often low-confidence predictions occur in dim lighting versus when the camera is occluded, so learners can practice failure-mode reporting.
+3. **Animal lying-time tracking** — SQL aggregates time spent with `behavior_label = 'lying'` per animal per day. In a real welfare workflow, unusually long lying periods can be a *signal worth investigating*; here the metric exists only to teach aggregation and alerting patterns.
+
+| Module | Role (learning focus) |
+|--------|------------------------|
+| `db_setup.py` | Local DuckDB init + synthetic farm-condition seeding |
+| `analytics_engine.py` | Pure Python + SQL for lying durations & failure metrics |
+| `test_eval.py` | PyTest QA that filters occluded/low-light frames and checks confidence |
+
+---
+
+## Project Notice
+
+**This project is open-source software built solely for learning, skills development, and technical portfolio demonstration, with zero commercial or monetized intent.**
+
+- It is an **Educational Proof-of-Concept / Open-Source Learning Project**.
+- Synthetic data only — no real farm video, animals, or personally identifying operational data.
+- Outputs are for teaching SQL analytics, DuckDB, and model-quality testing — **not** veterinary advice, welfare certification, or production monitoring.
+- You may fork, study, and extend it under the spirit of open-source education; do not present it as a paid product or clinical system.
+
+---
+
+## Quickstart Guide
+
+### Prerequisites
+
+- Python 3.10+
+- `pip` available on your PATH
+
+### Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 1) Initialize DuckDB and seed synthetic telemetry
+
+```bash
+python3 db_setup.py
+```
+
+This creates `livestock_analytics.duckdb` and inserts **1,000** synthetic `frame_telemetry` rows spanning bright light, low light, and camera occlusions.
+
+### 2) Run the analytics engine
+
+```bash
+python3 analytics_engine.py
+```
+
+Prints:
+
+- daily lying durations per animal (illness-flagging *demo* metric)
+- model performance under low light vs occlusion
+
+### 3) Run the PyTest quality harness
+
+```bash
+python3 -m pytest test_eval.py -v
+```
+
+The harness filters out occluded and low-light frames, then asserts that remaining “good condition” predictions meet confidence benchmarks.
+
+### One-liner (setup → analytics → tests)
+
+```bash
+python3 db_setup.py && python3 analytics_engine.py && python3 -m pytest test_eval.py -v
+```
+
+---
+
+## Table Schema (`frame_telemetry`)
+
+| Column | Type | Description (educational) |
+|--------|------|---------------------------|
+| `frame_id` | `VARCHAR` | Synthetic frame identifier |
+| `timestamp` | `TIMESTAMP` | Frame capture time |
+| `animal_id` | `VARCHAR` | Synthetic animal ID |
+| `behavior_label` | `VARCHAR` | e.g. `lying`, `standing`, `walking` |
+| `confidence_score` | `DOUBLE` | Detector confidence in `[0, 1]` |
+| `lighting_level` | `VARCHAR` | `bright` or `low` |
+| `is_occluded` | `BOOLEAN` | Camera / subject occlusion flag |
+
+---
+
+## Learning Outcomes
+
+- Local analytical warehouses with **DuckDB**
+- SQL-driven CV telemetry aggregations
+- Separating **data-quality filters** from **model-quality metrics**
+- Encoding evaluation gates as **PyTest** assertions for an MLOps-style harness
