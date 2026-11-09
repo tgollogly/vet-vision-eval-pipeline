@@ -1,13 +1,21 @@
 # Livestock Vision Analytics & MLOps Engine (Educational Project)
 
+<p align="center">
+  <img
+    src="docs/assets/hero-livestock-vision.jpg"
+    alt="Livestock Vision Analytics — Educational MLOps Proof-of-Concept hero banner showing pasture cattle with computer-vision bounding boxes"
+    width="100%"
+  />
+</p>
+
 > **Educational Proof-of-Concept / Open-Source Learning Project**  
 > This repository is a self-contained portfolio demo for learning computer-vision telemetry analytics and model-failure monitoring patterns. It is **not** a production farm system, veterinary diagnostic tool, or commercial product.
 
 ---
 
-## Hero Image / Architecture
+## Architecture
 
-Data moves from synthetic camera-frame metadata through a local DuckDB engine into SQL analytics, then through a PyTest quality harness:
+Data moves from camera-frame metadata through a local DuckDB engine into SQL analytics, then through a PyTest quality harness:
 
 ```text
 ┌─────────────────────┐     ┌──────────────────────┐     ┌─────────────────┐     ┌──────────────────────┐
