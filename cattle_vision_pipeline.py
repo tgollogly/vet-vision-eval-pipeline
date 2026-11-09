@@ -1,13 +1,13 @@
 """
 Educational Proof-of-Concept / Open-Source Learning Project
 ------------------------------------------------------------
-cattle_vision_pipeline.py — Pre-trained YOLO cattle detection, simple
-posture heuristics (standing vs lying), field lighting / occlusion checks,
+cattle_vision_pipeline.py — Pre-trained YOLO cattle detection, posture
+heuristics (standing vs lying), lighting / occlusion checks, RTSP reconnect,
 and real-time DuckDB telemetry logging.
 
-This module is open-source software built solely for learning, skills
-development, and technical portfolio demonstration, with zero commercial
-or monetized intent. It is not a veterinary diagnostic or production
+This module is unmonetized open-source software built solely for learning,
+skills development, and technical portfolio demonstration, with zero
+commercial intent. It is not a veterinary diagnostic or production
 welfare-certification system.
 """
 
@@ -32,7 +32,7 @@ import numpy as np
 from db_setup import DB_PATH, connect
 
 # Ultralytics is imported lazily inside ``load_yolo_model`` so heuristic unit
-# tests and documentation imports do not require a GPU stack at collect time.
+# tests do not require a GPU stack at collection time.
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -46,12 +46,9 @@ logging.basicConfig(
 log = logging.getLogger("cattle_vision")
 
 # ---------------------------------------------------------------------------
-# COCO animal / cattle class filters
+# COCO cattle / animal class filters
 # ---------------------------------------------------------------------------
 
-# Ultralytics YOLO models trained on COCO use these class IDs.
-# Primary cattle class is ``cow`` (19). Optional livestock neighbours are
-# included when ``--include-livestock`` is set.
 COCO_COW_CLASS_ID = 19
 COCO_LIVESTOCK_CLASS_IDS = {
     17: "horse",
@@ -88,18 +85,47 @@ class PipelineConfig:
     model_path: str = DEFAULT_MODEL
     conf_threshold: float = 0.25
     iou_threshold: float = 0.45
-    target_fps: float = 2.0
+    target_fps: float = 1.0  # process ~1 frame/sec by default
     display: bool = True
     max_frames: int | None = None
     include_livestock: bool = False
     lying_aspect_ratio: float = LYING_ASPECT_RATIO
     imgsz: int = 640
+    reconnect_delay_sec: float = 3.0
+    max_reconnect_attempts: int = 0  # 0 = retry forever for live streams
+    camera_label: str | None = None
 
     @property
     def class_ids(self) -> set[int]:
         if self.include_livestock:
             return set(COCO_LIVESTOCK_CLASS_IDS.keys())
         return set(DEFAULT_CATTLE_CLASS_IDS)
+
+    @property
+    def camera_source(self) -> str:
+        """Human-readable camera_source value written to DuckDB."""
+        if self.camera_label:
+            return self.camera_label
+        text = str(self.source)
+        if text.isdigit():
+            return f"usb:{text}"
+        parsed = urlparse(text)
+        if parsed.scheme in {"rtsp", "rtsps", "http", "https"}:
+            host = parsed.hostname or "unknown-host"
+            port = f":{parsed.port}" if parsed.port else ""
+            return f"{parsed.scheme}://{host}{port}{parsed.path}"
+        return text
+
+
+def classify_source(source: str) -> str:
+    """Return ``rtsp``, ``usb``, or ``file`` for reconnect policy."""
+    text = str(source)
+    if text.isdigit():
+        return "usb"
+    scheme = urlparse(text).scheme.lower()
+    if scheme in {"rtsp", "rtsps", "http", "https"}:
+        return "rtsp"
+    return "file"
 
 
 # ---------------------------------------------------------------------------
@@ -112,14 +138,15 @@ def ensure_cattle_telemetry_table(con: duckdb.DuckDBPyConnection) -> None:
     Ensure ``cattle_telemetry`` exists with the educational portfolio schema.
 
     Columns:
-      frame_id, timestamp, animal_id, behavior_label, confidence_score,
-      bounding_box, lighting_level, is_occluded
+      frame_id, timestamp, camera_source, animal_id, behavior_label,
+      confidence_score, bounding_box, lighting_level, is_occluded
     """
     con.execute(
         f"""
         CREATE TABLE IF NOT EXISTS {CATTLE_TELEMETRY_TABLE} (
             frame_id         VARCHAR NOT NULL,
             timestamp        TIMESTAMP NOT NULL,
+            camera_source    VARCHAR NOT NULL,
             animal_id        VARCHAR NOT NULL,
             behavior_label   VARCHAR NOT NULL,
             confidence_score DOUBLE NOT NULL,
@@ -127,6 +154,13 @@ def ensure_cattle_telemetry_table(con: duckdb.DuckDBPyConnection) -> None:
             lighting_level   VARCHAR NOT NULL,
             is_occluded      BOOLEAN NOT NULL
         )
+        """
+    )
+    # Forward-compatible for DBs created before camera_source existed.
+    con.execute(
+        f"""
+        ALTER TABLE {CATTLE_TELEMETRY_TABLE}
+        ADD COLUMN IF NOT EXISTS camera_source VARCHAR DEFAULT 'unknown'
         """
     )
 
@@ -161,6 +195,7 @@ class CattleTelemetryWriter:
             (
                 r["frame_id"],
                 r["timestamp"],
+                r["camera_source"],
                 r["animal_id"],
                 r["behavior_label"],
                 float(r["confidence_score"]),
@@ -175,13 +210,14 @@ class CattleTelemetryWriter:
             INSERT INTO {CATTLE_TELEMETRY_TABLE} (
                 frame_id,
                 timestamp,
+                camera_source,
                 animal_id,
                 behavior_label,
                 confidence_score,
                 bounding_box,
                 lighting_level,
                 is_occluded
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -282,10 +318,14 @@ def load_yolo_model(model_path: str = DEFAULT_MODEL) -> Any:
 
 
 def open_video_source(source: str) -> cv2.VideoCapture:
-    """Open a local video file or RTSP / HTTP camera stream."""
-    parsed = urlparse(source)
-    if parsed.scheme in {"rtsp", "rtsps", "http", "https"}:
-        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    """
+    Open RTSP/IP streams, USB webcam indices (``0`` / ``1``), or local video files.
+    """
+    kind = classify_source(source)
+    if kind == "usb":
+        cap = cv2.VideoCapture(int(source))
+    elif kind == "rtsp":
+        cap = cv2.VideoCapture(str(source), cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     else:
         path = Path(source)
@@ -328,9 +368,7 @@ def extract_cattle_detections(
     lying_aspect_ratio: float,
     conf_threshold: float,
 ) -> list[CattleDetection]:
-    """
-    Parse an Ultralytics result, keep cattle/animal classes, and attach heuristics.
-    """
+    """Parse an Ultralytics result, keep cattle/animal classes, attach heuristics."""
     frame_h, frame_w = frame_shape[:2]
     detections: list[CattleDetection] = []
 
@@ -342,7 +380,6 @@ def extract_cattle_detections(
     confs = boxes.conf.cpu().numpy()
     clss = boxes.cls.cpu().numpy().astype(int)
 
-    # Prefer tracker IDs when ``model.track`` is used; else fall back to index.
     track_ids = None
     if boxes.id is not None:
         track_ids = boxes.id.cpu().numpy().astype(int)
@@ -405,11 +442,11 @@ def draw_detections(frame: np.ndarray, detections: Iterable[CattleDetection]) ->
             1,
             cv2.LINE_AA,
         )
-    # HUD: lighting
-    if detections:
-        lighting = next(iter(detections)).lighting_level
-    else:
-        lighting = classify_lighting_level(frame)
+    lighting = (
+        next(iter(detections)).lighting_level
+        if detections
+        else classify_lighting_level(frame)
+    )
     cv2.putText(
         annotated,
         f"lighting={lighting} | EDU PoC (q=quit)",
@@ -424,7 +461,7 @@ def draw_detections(frame: np.ndarray, detections: Iterable[CattleDetection]) ->
 
 
 # ---------------------------------------------------------------------------
-# Main pipeline
+# Main pipeline (throttle + reconnect + graceful shutdown)
 # ---------------------------------------------------------------------------
 
 
@@ -432,7 +469,8 @@ class CattleVisionPipeline:
     """
     End-to-end educational loop:
 
-    video/RTSP → YOLO cattle filter → posture / lighting / occlusion → DuckDB
+    Camera/file → sample @ ~1 FPS → YOLO cattle filter → posture / lighting /
+    occlusion heuristics → DuckDB ``cattle_telemetry`` → optional preview.
     """
 
     def __init__(self, config: PipelineConfig) -> None:
@@ -441,6 +479,7 @@ class CattleVisionPipeline:
         self.model = load_yolo_model(config.model_path)
         self._stop = False
         self._processed = 0
+        self._source_kind = classify_source(config.source)
 
     def request_stop(self, *_args: Any) -> None:
         if not self._stop:
@@ -451,6 +490,34 @@ class CattleVisionPipeline:
         signal.signal(signal.SIGINT, self.request_stop)
         signal.signal(signal.SIGTERM, self.request_stop)
 
+    def _should_reconnect(self) -> bool:
+        return self._source_kind in {"rtsp", "usb"}
+
+    def _open_with_retries(self) -> cv2.VideoCapture | None:
+        attempts = 0
+        while not self._stop:
+            try:
+                cap = open_video_source(self.config.source)
+                log.info(
+                    "Camera connected | kind=%s | source=%s",
+                    self._source_kind,
+                    self.config.camera_source,
+                )
+                return cap
+            except Exception as exc:  # noqa: BLE001 — field demos need resilient logs
+                attempts += 1
+                log.warning("Connection failed (attempt %d): %s", attempts, exc)
+                if (
+                    self.config.max_reconnect_attempts > 0
+                    and attempts >= self.config.max_reconnect_attempts
+                ):
+                    log.error("Max reconnect attempts reached — giving up")
+                    return None
+                if self._source_kind == "file":
+                    return None
+                time.sleep(self.config.reconnect_delay_sec)
+        return None
+
     def _detections_to_records(
         self,
         *,
@@ -458,10 +525,12 @@ class CattleVisionPipeline:
         timestamp: datetime,
         detections: Sequence[CattleDetection],
     ) -> list[dict[str, Any]]:
+        camera_source = self.config.camera_source
         return [
             {
                 "frame_id": frame_id,
                 "timestamp": timestamp,
+                "camera_source": camera_source,
                 "animal_id": det.animal_id,
                 "behavior_label": det.behavior_label,
                 "confidence_score": det.confidence,
@@ -475,8 +544,6 @@ class CattleVisionPipeline:
     def process_frame(self, frame: np.ndarray, frame_index: int) -> list[CattleDetection]:
         """Run YOLO + heuristics on a single BGR frame."""
         lighting = classify_lighting_level(frame)
-
-        # ``track`` keeps stable animal_id values across frames when possible.
         results = self.model.track(
             source=frame,
             persist=True,
@@ -486,9 +553,8 @@ class CattleVisionPipeline:
             imgsz=self.config.imgsz,
             verbose=False,
         )
-        result = results[0]
         return extract_cattle_detections(
-            result,
+            results[0],
             frame_shape=frame.shape,
             lighting_level=lighting,
             allowed_class_ids=self.config.class_ids,
@@ -496,99 +562,124 @@ class CattleVisionPipeline:
             conf_threshold=self.config.conf_threshold,
         )
 
+    def _file_frame_stride(self, cap: cv2.VideoCapture) -> int:
+        source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0) or 30.0
+        stride = max(1, int(round(source_fps / max(self.config.target_fps, 0.05))))
+        log.info(
+            "File throttle | source_fps=%.2f | target_fps=%.2f | stride=%d",
+            source_fps,
+            self.config.target_fps,
+            stride,
+        )
+        return stride
+
     def run(self) -> int:
-        """Process the configured source; return number of sampled frames."""
+        """Main ingest loop with RTSP/USB reconnect. Returns sampled frame count."""
         self._install_signal_handlers()
         self.writer.open()
-        cap = open_video_source(self.config.source)
         window = "Cattle Vision Pipeline (Educational PoC) — press q to quit"
-
         interval = 1.0 / max(self.config.target_fps, 0.05)
-        next_sample_at = time.monotonic()
-        raw_index = 0
-        is_file = urlparse(self.config.source).scheme not in {
-            "rtsp",
-            "rtsps",
-            "http",
-            "https",
-        }
-        file_stride = 1
-        if is_file:
-            source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0) or 30.0
-            file_stride = max(1, int(round(source_fps / max(self.config.target_fps, 0.05))))
-            log.info(
-                "File throttle | source_fps=%.2f | target_fps=%.2f | stride=%d",
-                source_fps,
-                self.config.target_fps,
-                file_stride,
-            )
 
         log.info(
-            "Ingest started | source=%s | classes=%s | model=%s",
-            self.config.source,
+            "Ingest started | source=%s | classes=%s | model=%s | target_fps=%.2f",
+            self.config.camera_source,
             sorted(self.config.class_ids),
             self.config.model_path,
+            self.config.target_fps,
         )
 
         try:
             while not self._stop:
-                ok, frame = cap.read()
-                raw_index += 1
-                if not ok or frame is None:
-                    log.info("End of stream / read failure after %d reads", raw_index - 1)
+                cap = self._open_with_retries()
+                if cap is None:
                     break
 
-                if is_file:
-                    if (raw_index - 1) % file_stride != 0:
-                        continue
-                else:
-                    now = time.monotonic()
-                    if now < next_sample_at:
-                        continue
-                    next_sample_at = now + interval
-
-                detections = self.process_frame(frame, raw_index)
-                frame_id = (
-                    f"cattle_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}"
-                    f"_{raw_index:06d}"
-                )
-                ts = datetime.now(timezone.utc).replace(tzinfo=None)
-                inserted = self.writer.insert_records(
-                    self._detections_to_records(
-                        frame_id=frame_id,
-                        timestamp=ts,
-                        detections=detections,
-                    )
-                )
-                self._processed += 1
-                log.info(
-                    "Frame %d | detections=%d | inserts=%d | lighting=%s",
-                    self._processed,
-                    len(detections),
-                    inserted,
-                    classify_lighting_level(frame),
+                next_sample_at = time.monotonic()
+                raw_index = 0
+                file_stride = (
+                    self._file_frame_stride(cap) if self._source_kind == "file" else None
                 )
 
-                if self.config.display:
-                    preview = draw_detections(frame, detections)
-                    try:
-                        cv2.imshow(window, preview)
-                        key = cv2.waitKey(1) & 0xFF
-                        if key in (ord("q"), ord("Q")):
-                            log.info("Quit key pressed")
+                try:
+                    while not self._stop:
+                        ok, frame = cap.read()
+                        raw_index += 1
+                        if not ok or frame is None:
+                            if self._source_kind == "file":
+                                log.info(
+                                    "Reached end of video file after %d reads",
+                                    raw_index - 1,
+                                )
+                            else:
+                                log.warning(
+                                    "Dropped / failed frame read — stream may have stalled"
+                                )
+                            break
+
+                        if file_stride is not None:
+                            if (raw_index - 1) % file_stride != 0:
+                                continue
+                        else:
+                            now = time.monotonic()
+                            if now < next_sample_at:
+                                continue
+                            next_sample_at = now + interval
+
+                        detections = self.process_frame(frame, raw_index)
+                        frame_id = (
+                            f"cattle_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}"
+                            f"_{raw_index:06d}"
+                        )
+                        ts = datetime.now(timezone.utc).replace(tzinfo=None)
+                        inserted = self.writer.insert_records(
+                            self._detections_to_records(
+                                frame_id=frame_id,
+                                timestamp=ts,
+                                detections=detections,
+                            )
+                        )
+                        self._processed += 1
+                        log.info(
+                            "Frame %d | detections=%d | inserts=%d | lighting=%s",
+                            self._processed,
+                            len(detections),
+                            inserted,
+                            classify_lighting_level(frame),
+                        )
+
+                        if self.config.display:
+                            preview = draw_detections(frame, detections)
+                            try:
+                                cv2.imshow(window, preview)
+                                key = cv2.waitKey(1) & 0xFF
+                                if key in (ord("q"), ord("Q")):
+                                    log.info("Quit key pressed")
+                                    self.request_stop()
+                            except cv2.error:
+                                log.warning("Display unavailable — continuing headless")
+                                self.config.display = False
+
+                        if (
+                            self.config.max_frames is not None
+                            and self._processed >= self.config.max_frames
+                        ):
+                            log.info("Reached max_frames=%d", self.config.max_frames)
                             self.request_stop()
-                    except cv2.error:
-                        log.warning("Display unavailable — continuing headless")
-                        self.config.display = False
+                finally:
+                    cap.release()
 
-                if (
-                    self.config.max_frames is not None
-                    and self._processed >= self.config.max_frames
-                ):
-                    log.info("Reached max_frames=%d", self.config.max_frames)
-                    self.request_stop()
+                if self._stop:
+                    break
+                if not self._should_reconnect():
+                    log.info("End of video file — ingestion complete")
+                    break
+
+                log.warning(
+                    "Stream disconnected — reconnecting in %.1fs",
+                    self.config.reconnect_delay_sec,
+                )
+                time.sleep(self.config.reconnect_delay_sec)
         finally:
-            cap.release()
             self.writer.close()
             if self.config.display:
                 try:
@@ -618,7 +709,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source",
         required=True,
-        help="Local video path or RTSP/HTTP camera URL",
+        help="RTSP URL, USB index (0/1), or local video path (.mp4)",
     )
     parser.add_argument(
         "--db-path",
@@ -639,8 +730,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--target-fps",
         type=float,
-        default=2.0,
-        help="Approximate processed frames per second",
+        default=1.0,
+        help="Sample / process approximately this many frames per second",
     )
     parser.add_argument(
         "--max-frames",
@@ -658,6 +749,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--include-livestock",
         action="store_true",
         help="Also keep COCO horse/sheep classes (still educational)",
+    )
+    parser.add_argument(
+        "--reconnect-delay",
+        type=float,
+        default=3.0,
+        help="Seconds to wait before reconnecting a dropped IP/USB stream",
+    )
+    parser.add_argument(
+        "--max-reconnect-attempts",
+        type=int,
+        default=0,
+        help="0 = retry forever for live cameras",
+    )
+    parser.add_argument(
+        "--camera-label",
+        default=None,
+        help="Override camera_source string stored in DuckDB",
     )
     parser.add_argument(
         "--no-display",
@@ -686,6 +794,9 @@ def main(argv: list[str] | None = None) -> int:
         include_livestock=args.include_livestock,
         lying_aspect_ratio=args.lying_aspect_ratio,
         imgsz=args.imgsz,
+        reconnect_delay_sec=args.reconnect_delay,
+        max_reconnect_attempts=args.max_reconnect_attempts,
+        camera_label=args.camera_label,
     )
     CattleVisionPipeline(config).run()
     return 0
