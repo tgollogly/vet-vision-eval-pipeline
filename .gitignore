@@ -7,4 +7,10 @@ venv/
 livestock_analytics.duckdb
 *.duckdb.wal
 sample_barn_footage.mp4
+sample_cow.jpg
+sample_cow_clip.mp4
+yolov8n.pt
+yolo11n.pt
+*.pt
+runs/
 .DS_Store
