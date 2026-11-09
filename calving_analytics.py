@@ -34,7 +34,8 @@ from db_setup import DB_PATH, connect
 RESTLESSNESS_WINDOW_HOURS = 2.0
 
 # Alert when standing <-> lying transitions in the window exceed this count.
-RESTLESSNESS_TRANSITION_THRESHOLD = 8
+# Tuned for ~1 Hz educational sampling: calm animals stay below; restless demo exceeds.
+RESTLESSNESS_TRANSITION_THRESHOLD = 200
 
 # Assumed sampling interval when converting lying-frame counts → hours.
 # Matches the pipeline default of ~1 processed frame per second.
@@ -264,13 +265,14 @@ def seed_cattle_telemetry_demo(
                     lighting = "bright"
                     occluded = False
                 elif animal_idx == 1:
-                    behavior = "lying" if step_i % 10 < 7 else "standing"
+                    # Mostly lying / calm — few posture flips (below alert threshold).
+                    behavior = "lying" if step_i % 600 < 540 else "standing"
                     confidence = 0.82
                     lighting = "bright"
                     occluded = False
                 else:
-                    # Edge-failure demo animal: dim / occluded / lower conf.
-                    behavior = "standing" if step_i % 5 else "lying"
+                    # Edge-failure demo animal: dim / occluded / lower conf; calm posture.
+                    behavior = "standing" if step_i % 900 < 800 else "lying"
                     confidence = 0.45 if step_i % 3 == 0 else 0.55
                     lighting = "low_light" if step_i % 2 == 0 else "night"
                     occluded = step_i % 4 == 0
