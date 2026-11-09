@@ -59,12 +59,43 @@ def create_frame_telemetry_table(con: duckdb.DuckDBPyConnection) -> None:
         CREATE TABLE {TABLE_NAME} (
             frame_id         VARCHAR NOT NULL,
             timestamp        TIMESTAMP NOT NULL,
+            camera_source    VARCHAR NOT NULL,
             animal_id        VARCHAR NOT NULL,
             behavior_label   VARCHAR NOT NULL,
             confidence_score DOUBLE NOT NULL,
             lighting_level   VARCHAR NOT NULL,
             is_occluded      BOOLEAN NOT NULL
         )
+        """
+    )
+
+
+def ensure_frame_telemetry_schema(con: duckdb.DuckDBPyConnection) -> None:
+    """
+    Create ``frame_telemetry`` if missing, and add ``camera_source`` when an
+    older educational DB was seeded before live camera ingestion existed.
+
+    Safe for the camera connector to call on every startup (idempotent).
+    """
+    con.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+            frame_id         VARCHAR NOT NULL,
+            timestamp        TIMESTAMP NOT NULL,
+            camera_source    VARCHAR NOT NULL,
+            animal_id        VARCHAR NOT NULL,
+            behavior_label   VARCHAR NOT NULL,
+            confidence_score DOUBLE NOT NULL,
+            lighting_level   VARCHAR NOT NULL,
+            is_occluded      BOOLEAN NOT NULL
+        )
+        """
+    )
+    # DuckDB supports IF NOT EXISTS on ADD COLUMN for forward-compatible demos.
+    con.execute(
+        f"""
+        ALTER TABLE {TABLE_NAME}
+        ADD COLUMN IF NOT EXISTS camera_source VARCHAR DEFAULT 'synthetic_seed'
         """
     )
 
@@ -139,6 +170,7 @@ def seed_synthetic_rows(
             (
                 f"frame_{i:05d}",
                 base_time + timedelta(minutes=i * 3),  # ~3-minute cadence
+                "synthetic_seed",  # camera_source for offline educational seeds
                 animal_id,
                 behavior,
                 _synthetic_confidence(lighting_level, is_occluded),
@@ -152,12 +184,13 @@ def seed_synthetic_rows(
         INSERT INTO {TABLE_NAME} (
             frame_id,
             timestamp,
+            camera_source,
             animal_id,
             behavior_label,
             confidence_score,
             lighting_level,
             is_occluded
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )

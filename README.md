@@ -11,21 +11,21 @@ Data moves from synthetic camera-frame metadata through a local DuckDB engine in
 
 ```text
 ┌─────────────────────┐     ┌──────────────────────┐     ┌─────────────────┐     ┌──────────────────────┐
-│ Camera Data /       │     │ DuckDB Local Engine  │     │ SQL Analytics   │     │ PyTest Quality      │
-│ Frame Metadata      │────▶│ livestock_analytics  │────▶│ Lying durations │────▶│ Harness              │
-│ (bbox / labels /    │     │ .duckdb              │     │ Failure metrics │     │ (confidence QA)      │
-│  lighting / occlusion)│   │                      │     │                 │     │                      │
+│ Camera Connector    │     │ DuckDB Local Engine  │     │ SQL Analytics   │     │ PyTest Quality      │
+│ (RTSP / USB / File) │────▶│ livestock_analytics  │────▶│ Lying durations │────▶│ Harness              │
+│ → mock bbox metadata│     │ .duckdb              │     │ Failure metrics │     │ (confidence QA)      │
 └─────────────────────┘     └──────────────────────┘     └─────────────────┘     └──────────────────────┘
 ```
 
 ```mermaid
 sequenceDiagram
-    participant Cam as Camera Data / Frame Metadata
+    participant Cam as Camera Connector<br/>(RTSP / USB / File)
     participant DB as DuckDB Local Engine
     participant SQL as SQL Analytics
     participant QA as PyTest Quality Harness
 
-    Cam->>DB: Seed frame_telemetry rows<br/>(bbox labels, confidence, lighting, occlusion)
+    Cam->>DB: Stream frame_telemetry rows<br/>(bbox labels, confidence, lighting, occlusion)
+    Note over Cam,DB: Also supports offline synthetic seeding via db_setup.py
     DB->>SQL: Query daily lying durations
     DB->>SQL: Query low-confidence rates<br/>(low light vs occlusion)
     SQL->>QA: Filtered high-quality frames
@@ -45,6 +45,7 @@ This educational project demonstrates a miniature **MLOps evaluation loop** for 
 | Module | Role (learning focus) |
 |--------|------------------------|
 | `db_setup.py` | Local DuckDB init + synthetic farm-condition seeding |
+| `camera_connector.py` | Universal OpenCV ingest (RTSP / USB / file) → mock detect → DuckDB |
 | `analytics_engine.py` | Pure Python + SQL for lying durations & failure metrics |
 | `test_eval.py` | PyTest QA that filters occluded/low-light frames and checks confidence |
 
@@ -93,7 +94,22 @@ Prints:
 - daily lying durations per animal (illness-flagging *demo* metric)
 - model performance under low light vs occlusion
 
-### 3) Run the PyTest quality harness
+### 3) Stream camera / video telemetry into DuckDB
+
+```bash
+# Local video file (auto-generates sample_barn_footage.mp4 if missing)
+python3 camera_connector.py --source sample_barn_footage.mp4 --no-display --max-frames 5
+
+# USB webcam
+python3 camera_connector.py --source 0 --target-fps 1 --no-display
+
+# RTSP / IP camera (credentials redacted in DuckDB camera_source logs)
+python3 camera_connector.py --source "rtsp://username:password@192.168.1.20:554/stream" --target-fps 1
+```
+
+Press **`q`** in the preview window (when display is enabled) or `Ctrl+C` for a graceful shutdown. Dropped IP streams automatically reconnect.
+
+### 4) Run the PyTest quality harness
 
 ```bash
 python3 -m pytest test_eval.py -v
@@ -101,10 +117,10 @@ python3 -m pytest test_eval.py -v
 
 The harness filters out occluded and low-light frames, then asserts that remaining “good condition” predictions meet confidence benchmarks.
 
-### One-liner (setup → analytics → tests)
+### One-liner (setup → short camera ingest → analytics → tests)
 
 ```bash
-python3 db_setup.py && python3 analytics_engine.py && python3 -m pytest test_eval.py -v
+python3 db_setup.py && python3 camera_connector.py --source sample_barn_footage.mp4 --no-display --max-frames 5 && python3 analytics_engine.py && python3 -m pytest test_eval.py -v
 ```
 
 ---
@@ -113,8 +129,9 @@ python3 db_setup.py && python3 analytics_engine.py && python3 -m pytest test_eva
 
 | Column | Type | Description (educational) |
 |--------|------|---------------------------|
-| `frame_id` | `VARCHAR` | Synthetic frame identifier |
+| `frame_id` | `VARCHAR` | Frame identifier |
 | `timestamp` | `TIMESTAMP` | Frame capture time |
+| `camera_source` | `VARCHAR` | USB index, redacted RTSP URL, file path, or `synthetic_seed` |
 | `animal_id` | `VARCHAR` | Synthetic animal ID |
 | `behavior_label` | `VARCHAR` | e.g. `lying`, `standing`, `walking` |
 | `confidence_score` | `DOUBLE` | Detector confidence in `[0, 1]` |
