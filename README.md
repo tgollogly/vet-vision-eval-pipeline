@@ -17,27 +17,25 @@
 
 Data moves from camera-frame metadata through a local DuckDB engine into SQL analytics, then through a PyTest quality harness:
 
+<p align="center">
+  <img
+    src="docs/assets/architecture-sequence.png"
+    alt="Architecture data flow: Camera Connector to DuckDB Local Engine to SQL Analytics to PyTest Quality Harness"
+    width="100%"
+  />
+</p>
+
 ```text
-┌─────────────────────┐     ┌──────────────────────┐     ┌─────────────────┐     ┌──────────────────────┐
-│ Camera Connector    │     │ DuckDB Local Engine  │     │ SQL Analytics   │     │ PyTest Quality      │
-│ (RTSP / USB / File) │────▶│ livestock_analytics  │────▶│ Lying durations │────▶│ Harness              │
-│ → mock bbox metadata│     │ .duckdb              │     │ Failure metrics │     │ (confidence QA)      │
-└─────────────────────┘     └──────────────────────┘     └─────────────────┘     └──────────────────────┘
-```
-
-```mermaid
-sequenceDiagram
-    participant Cam as Camera Connector<br/>(RTSP / USB / File)
-    participant DB as DuckDB Local Engine
-    participant SQL as SQL Analytics
-    participant QA as PyTest Quality Harness
-
-    Cam->>DB: Stream frame_telemetry rows<br/>(bbox labels, confidence, lighting, occlusion)
-    Note over Cam,DB: Also supports offline synthetic seeding via db_setup.py
-    DB->>SQL: Query daily lying durations
-    DB->>SQL: Query low-confidence rates<br/>(low light vs occlusion)
-    SQL->>QA: Filtered high-quality frames
-    QA->>QA: Assert confidence benchmarks
+Camera Connector (RTSP / USB / File)
+        |
+        v
+DuckDB Local Engine (livestock_analytics.duckdb)
+        |
+        v
+SQL Analytics (lying durations + failure metrics)
+        |
+        v
+PyTest Quality Harness (confidence benchmarks)
 ```
 
 ---
