@@ -2,8 +2,8 @@
 
 <p align="center">
   <img
-    src="docs/assets/hero-livestock-vision.jpg"
-    alt="Cattle Vision & Welfare Telemetry Engine — Educational MLOps Proof-of-Concept hero banner"
+    src="docs/assets/hero-cattle-welfare.jpg"
+    alt="Cattle Vision and Welfare Telemetry — Educational Open-Source Learning Project hero: barn camera monitoring cattle with standing and lying detections"
     width="100%"
   />
 </p>
@@ -18,43 +18,29 @@
 
 ---
 
-## Hero Architecture Diagram
+## Architecture
+
+Data flow for this educational portfolio (renders as an image on GitHub Mobile — no Mermaid source block):
 
 <p align="center">
   <img
     src="docs/assets/architecture-sequence.png"
-    alt="Architecture: Camera Feed to YOLO Posture Inference to DuckDB Telemetry to SQL Calving Analytics to PyTest Quality Harness"
+    alt="Architecture diagram: Camera Feed to YOLO Inference to DuckDB Telemetry to Calving Analytics to PyTest QA"
     width="100%"
   />
 </p>
-
-```mermaid
-sequenceDiagram
-    participant Cam as Camera Feed
-    participant YOLO as YOLO Posture Inference
-    participant DB as DuckDB Telemetry
-    participant SQL as SQL Calving Analytics
-    participant QA as PyTest Quality Harness
-
-    Cam->>YOLO: RTSP USB or MP4 frames at about 1 FPS
-    YOLO->>DB: Insert cattle_telemetry rows
-    Note over YOLO,DB: standing or lying, lighting, occlusion, camera_source
-    DB->>SQL: Restlessness score, lying hours, edge failures
-    SQL->>QA: Filtered bright unoccluded rows
-    QA->>QA: Assert schema and confidence benchmarks
-```
 
 ```text
 Camera Feed (RTSP / USB / .mp4)
         |
         v
-YOLO Posture Inference (cattle filter + standing/lying)
+YOLO Posture Inference (cattle filter + standing / lying)
         |
         v
 DuckDB Telemetry (livestock_analytics.duckdb / cattle_telemetry)
         |
         v
-SQL Calving Analytics (restlessness + lying + edge failures)
+SQL Calving Analytics (restlessness + lying hours + edge failures)
         |
         v
 PyTest Quality Harness (filter occlusion / low light)
