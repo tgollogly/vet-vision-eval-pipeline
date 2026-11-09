@@ -117,6 +117,7 @@ def test_cattle_telemetry_insert(tmp_path: Path) -> None:
                 {
                     "frame_id": "cattle_test_001",
                     "timestamp": datetime(2026, 1, 1, 12, 0, 0),
+                    "camera_source": "usb:0",
                     "animal_id": "track_0001",
                     "behavior_label": "lying",
                     "confidence_score": 0.91,
@@ -131,9 +132,10 @@ def test_cattle_telemetry_insert(tmp_path: Path) -> None:
         try:
             ensure_cattle_telemetry_table(con)
             row = con.execute(
-                "SELECT animal_id, behavior_label, lighting_level FROM cattle_telemetry"
+                "SELECT animal_id, behavior_label, lighting_level, camera_source "
+                "FROM cattle_telemetry"
             ).fetchone()
-            assert row == ("track_0001", "lying", "bright")
+            assert row == ("track_0001", "lying", "bright", "usb:0")
         finally:
             con.close()
     finally:
