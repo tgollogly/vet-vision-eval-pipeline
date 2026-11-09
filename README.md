@@ -20,22 +20,30 @@ Data moves from camera-frame metadata through a local DuckDB engine into SQL ana
 ```text
 ┌─────────────────────┐     ┌──────────────────────┐     ┌─────────────────┐     ┌──────────────────────┐
 │ Camera Connector    │     │ DuckDB Local Engine  │     │ SQL Analytics   │     │ PyTest Quality      │
-│ (RTSP / USB / File) │────▶│ livestock_analytics  │────▶│ Lying durations │────▶│ Harness              │
-│ → mock bbox metadata│     │ .duckdb              │     │ Failure metrics │     │ (confidence QA)      │
+│ (RTSP / USB / File) │---->| livestock_analytics  │---->| Lying durations │---->| Harness              │
+│ mock bbox metadata  │     │ .duckdb              │     │ Failure metrics │     │ (confidence QA)      │
 └─────────────────────┘     └──────────────────────┘     └─────────────────┘     └──────────────────────┘
 ```
 
+<p align="center">
+  <img
+    src="docs/assets/architecture-sequence.png"
+    alt="Architecture sequence: Camera Connector to DuckDB to SQL Analytics to PyTest Quality Harness"
+    width="100%"
+  />
+</p>
+
 ```mermaid
 sequenceDiagram
-    participant Cam as Camera Connector<br/>(RTSP / USB / File)
+    participant Cam as Camera Connector
     participant DB as DuckDB Local Engine
     participant SQL as SQL Analytics
     participant QA as PyTest Quality Harness
 
-    Cam->>DB: Stream frame_telemetry rows<br/>(bbox labels, confidence, lighting, occlusion)
-    Note over Cam,DB: Also supports offline synthetic seeding via db_setup.py
+    Cam->>DB: Stream frame_telemetry rows
+    Note over Cam,DB: Offline seeding via db_setup.py also supported
     DB->>SQL: Query daily lying durations
-    DB->>SQL: Query low-confidence rates<br/>(low light vs occlusion)
+    DB->>SQL: Query low-confidence rates under low light vs occlusion
     SQL->>QA: Filtered high-quality frames
     QA->>QA: Assert confidence benchmarks
 ```
