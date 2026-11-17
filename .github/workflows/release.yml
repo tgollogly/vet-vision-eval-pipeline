@@ -71,11 +71,19 @@ jobs:
             echo "No CHANGELOG section for ${VERSION}" >&2
             exit 1
           fi
+          {
+            echo '🔒 These files are sealed: SHA-256 checksums in SHA256SUMS.txt plus GitHub build attestations. See the README "Verify your download" section to check them.'
+            echo
+            cat release-notes.md
+          } > release-notes-final.md
+          mv release-notes-final.md release-notes.md
       - name: Create GitHub Release
         uses: softprops/action-gh-release@7b4da11513bf3f43f9999e90eabced41ab8bb048 # v2.2.0
         with:
           body_path: release-notes.md
           files: |
-            dist/*
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.zip
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
