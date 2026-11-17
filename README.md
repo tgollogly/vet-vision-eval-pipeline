@@ -1,6 +1,15 @@
 # Cattle Vision & Welfare Telemetry Engine (Educational Project)
 
 <p align="center">
+  <a href="#verify-your-download">
+    <img
+      src="https://img.shields.io/badge/releases-signed%20%26%20verifiable-brightgreen"
+      alt="Signed releases"
+    />
+  </a>
+</p>
+
+<p align="center">
   <img
     src="docs/assets/hero-cattle-welfare.jpg"
     alt="Cattle Vision and Welfare Telemetry — Educational Open-Source Learning Project hero: barn camera monitoring cattle with standing and lying detections"
