@@ -8,7 +8,7 @@
   />
 </p>
 
-**License:** [MIT](./LICENSE) · Copyright (c) 2026 **Thomas Gollogly**  
+**License:** [MIT](./LICENSE) · Copyright (c) 2026 **Thomas Gollogly** · **v1.0.0**  
 **Software cost:** Free and open source (optional hardware / electricity only)
 
 > **Educational Proof-of-Concept / Open-Source Learning Project**  
@@ -208,6 +208,36 @@ This software is provided **“as is”** as an **Educational Proof-of-Concept /
 - Restlessness / lying / confidence outputs are **learning telemetry**, not medical or husbandry advice.
 - You are responsible for safe mounting, electrics, animal welfare checks, and UK GDPR where personal data appears.
 - No liability for loss, injury, stock outcomes, or business decisions arising from use of this software.
+
+---
+
+## Verify your download
+
+Official [GitHub Releases](https://github.com/tgollogly/vet-vision-eval-pipeline/releases/latest) include a checksum manifest and build provenance attestations.
+
+### SHA256 checksum
+
+**Windows (PowerShell / cmd):**
+
+```text
+certutil -hashfile FILE SHA256
+```
+
+Compare the output with the matching line in `SHA256SUMS.txt` from the release.
+
+**macOS / Linux:**
+
+```bash
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+### Build provenance
+
+With the [GitHub CLI](https://cli.github.com/) installed, verify each downloaded release file (wheel, sdist, zip):
+
+```bash
+gh attestation verify FILE --repo tgollogly/vet-vision-eval-pipeline
+```
 
 ---
 
